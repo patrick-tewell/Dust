@@ -9,7 +9,7 @@ const MAX_STAR_MASS = 10000;
 const MAX_DUST_LEVEL = 20;
 const MAX_SIZE_LEVEL = 20;
 const MAX_SPEED_LEVEL = 20;
-const MAX_PARTICLES = 400;
+const MAX_PARTICLES = 225;
 const DUST_MASS_GRAVITY_SCALE = 0.01;
 const MAX_METEOR_CAPACITY_LEVEL = 20;
 const MAX_METEOR_CHARGE_LEVEL = 20;
@@ -495,9 +495,21 @@ class UIManager {
             canvas: document.getElementById("gameCanvas")
         };
 
+        // Cache for State Diffing
+        this.lastDisplayedState = {};
+        
         this.upgradeBarTimeout = null;
         this.bindEvents();
-        this.refreshAll();
+        this.requestUIUpdate(); // Initial render
+    }
+
+    // Helper to conditionally update text only if value changed
+    updateDOMElement(key, element, value) {
+        if (!element) return;
+        if (this.lastDisplayedState[key] === value) return;
+        
+        element.textContent = value;
+        this.lastDisplayedState[key] = value;
     }
 
     bindEvents() {
@@ -545,9 +557,7 @@ class UIManager {
 
     tryPurchase(btn, currentLevel, maxLevel, onSuccess) {
         if (currentLevel >= maxLevel) return;
-        const cost = this.state.getUpgradeCost(currentLevel + 1); // Adjust based on original offset logic
         
-        // Match original offset logic where dust/size/speed passed current level, meteor passed current + 1
         const actualCost = btn.id.includes("meteor") ? this.state.getUpgradeCost(currentLevel + 1) : this.state.getUpgradeCost(currentLevel);
         
         if (this.state.starMass < actualCost) {
@@ -574,33 +584,44 @@ class UIManager {
         clearTimeout(this.upgradeBarTimeout);
     }
 
-    refreshAll() {
-        this.elements.massDisplay.textContent = Math.floor(this.state.starMass);
-        this.elements.dustLevelDisplay.textContent = this.state.dustLevel;
-        this.elements.sizeLevelDisplay.textContent = this.state.sizeLevel;
-        this.elements.speedLevelDisplay.textContent = this.state.speedLevel;
+    requestUIUpdate() {
+        // Labels & Numbers
+        this.updateDOMElement('mass', this.elements.massDisplay, Math.floor(this.state.starMass));
+        this.updateDOMElement('dustLvl', this.elements.dustLevelDisplay, this.state.dustLevel);
+        this.updateDOMElement('sizeLvl', this.elements.sizeLevelDisplay, this.state.sizeLevel);
+        this.updateDOMElement('speedLvl', this.elements.speedLevelDisplay, this.state.speedLevel);
 
-        this.elements.dustCostDisplay.textContent = this.state.dustLevel >= MAX_DUST_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.dustLevel);
-        this.elements.sizeCostDisplay.textContent = this.state.sizeLevel >= MAX_SIZE_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.sizeLevel);
-        this.elements.speedCostDisplay.textContent = this.state.speedLevel >= MAX_SPEED_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.speedLevel);
+        // Costs
+        this.updateDOMElement('dustCost', this.elements.dustCostDisplay, this.state.dustLevel >= MAX_DUST_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.dustLevel));
+        this.updateDOMElement('sizeCost', this.elements.sizeCostDisplay, this.state.sizeLevel >= MAX_SIZE_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.sizeLevel));
+        this.updateDOMElement('speedCost', this.elements.speedCostDisplay, this.state.speedLevel >= MAX_SPEED_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.speedLevel));
         
         if (this.elements.meteorCapacityCostDisplay) {
-            this.elements.meteorCapacityCostDisplay.textContent = this.state.meteorCapacityLevel >= MAX_METEOR_CAPACITY_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.meteorCapacityLevel + 1);
+            this.updateDOMElement('metCapCost', this.elements.meteorCapacityCostDisplay, this.state.meteorCapacityLevel >= MAX_METEOR_CAPACITY_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.meteorCapacityLevel + 1));
         }
         if (this.elements.meteorChargeCostDisplay) {
-            this.elements.meteorChargeCostDisplay.textContent = this.state.meteorChargeLevel >= MAX_METEOR_CHARGE_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.meteorChargeLevel + 1);
+            this.updateDOMElement('metChrgCost', this.elements.meteorChargeCostDisplay, this.state.meteorChargeLevel >= MAX_METEOR_CHARGE_LEVEL ? "MAX" : this.state.getUpgradeCost(this.state.meteorChargeLevel + 1));
         }
 
         this.refreshMeteorInventory();
         this.updateMaxedButtons();
     }
 
+    refreshAll() {
+        this.requestUIUpdate();
+    }
+
     refreshMeteorInventory() {
         if (this.elements.meteorInventoryDisplay) {
-            this.elements.meteorInventoryDisplay.textContent = `${this.state.currentMeteors} / ${this.state.meteorCapacityLevel}`;
+            const inventoryString = `${this.state.currentMeteors} / ${this.state.meteorCapacityLevel}`;
+            this.updateDOMElement('metInventory', this.elements.meteorInventoryDisplay, inventoryString);
         }
+        
         if (this.elements.meteorRechargeBar && (this.state.currentMeteors >= this.state.meteorCapacityLevel || this.state.meteorCapacityLevel === 0)) {
-            this.elements.meteorRechargeBar.style.width = "0%";
+            if (this.lastDisplayedState['meteorPct'] !== 0) {
+                this.elements.meteorRechargeBar.style.width = "0%";
+                this.lastDisplayedState['meteorPct'] = 0;
+            }
         }
     }
 
@@ -613,34 +634,53 @@ class UIManager {
     }
 
     updateCooldownBars(now) {
+        // Dust Cooldown Bar
         if (this.state.onCooldown) {
             const remaining = this.state.cooldownEnd - now;
             if (remaining <= 0) {
                 this.state.onCooldown = false;
                 this.elements.cooldownBar.style.width = "0%";
+                this.lastDisplayedState['cooldownPct'] = 0;
                 this.elements.createDustBtn.classList.remove("on-cooldown");
                 if (this.state.autoPlaying) this.game.spawnDust(true);
             } else {
-                this.elements.cooldownBar.style.width = ((1 - remaining / this.state.cooldownDuration) * 100) + "%";
+                const targetPct = (1 - remaining / this.state.cooldownDuration) * 100;
+                const lastPct = this.lastDisplayedState['cooldownPct'] || 0;
+                
+                // Only write to DOM if change is > 0.5%
+                if (Math.abs(targetPct - lastPct) > 0.5) {
+                    this.elements.cooldownBar.style.width = targetPct + "%";
+                    this.lastDisplayedState['cooldownPct'] = targetPct;
+                }
             }
         }
 
+        // Meteor Recharge Bar
         if (this.state.meteorCapacityLevel > 0) {
             if (this.state.currentMeteors >= this.state.meteorCapacityLevel) {
                 this.state.meteorCooldownEnd = 0;
-                if (this.elements.meteorRechargeBar) this.elements.meteorRechargeBar.style.width = "0%";
+                if (this.lastDisplayedState['meteorPct'] !== 0) {
+                    if (this.elements.meteorRechargeBar) this.elements.meteorRechargeBar.style.width = "0%";
+                    this.lastDisplayedState['meteorPct'] = 0;
+                }
             } else {
                 if (this.state.meteorCooldownEnd === 0) {
                     this.state.meteorCooldownEnd = now + this.state.getMeteorRechargeSeconds() * 1000;
                 }
+                
                 if (now >= this.state.meteorCooldownEnd) {
                     this.state.currentMeteors = Math.min(this.state.currentMeteors + 1, this.state.meteorCapacityLevel);
                     this.state.meteorCooldownEnd = this.state.currentMeteors < this.state.meteorCapacityLevel ? now + this.state.getMeteorRechargeSeconds() * 1000 : 0;
                     this.refreshMeteorInventory();
                 } else if (this.elements.meteorRechargeBar) {
                     const total = this.state.getMeteorRechargeSeconds() * 1000;
-                    const pct = Math.max(0, Math.min(1, (total - (this.state.meteorCooldownEnd - now)) / total)) * 100;
-                    this.elements.meteorRechargeBar.style.width = pct + "%";
+                    const targetPct = Math.max(0, Math.min(1, (total - (this.state.meteorCooldownEnd - now)) / total)) * 100;
+                    const lastPct = this.lastDisplayedState['meteorPct'] || 0;
+
+                    if (Math.abs(targetPct - lastPct) > 0.5) {
+                        this.elements.meteorRechargeBar.style.width = targetPct + "%";
+                        this.lastDisplayedState['meteorPct'] = targetPct;
+                    }
                 }
             }
         }
