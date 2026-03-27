@@ -1,8 +1,8 @@
 // --- Debugging ---
 const STARTING_STAR_MASS = 100;
-const STARTING_DUST_LEVEL = 20;
-const STARTING_SIZE_LEVEL = 20;
-const STARTING_SPEED_LEVEL = 20;
+const STARTING_DUST_LEVEL = 1;
+const STARTING_SIZE_LEVEL = 1;
+const STARTING_SPEED_LEVEL = 1;
 
 // --- Constants ---
 const MAX_STAR_MASS = 10000;
