@@ -72,7 +72,7 @@ class OrbitalEntity {
         this.trailRadiusMult = 0.7;
         
         // Fixed buffer initialization
-        this.maxTrail = 64; 
+        this.maxTrail = 32; 
         this.trailX = new Float32Array(this.maxTrail);
         this.trailY = new Float32Array(this.maxTrail);
         this.trailPtr = 0;
