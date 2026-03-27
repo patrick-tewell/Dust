@@ -63,33 +63,41 @@ class OrbitalEntity {
         this.mass = mass;
         this.radius = dustRadius(mass);
         this.alive = true;
-        this.trail = [];
         this.vx = 0;
         this.vy = 0;
-        // Defaults for drawing; overridden by subclasses
+        
         this.colorR = 255; this.colorG = 255; this.colorB = 255;
         this.color = `rgb(255,255,255)`;
         this.trailAlphaMult = 0.5;
         this.trailRadiusMult = 0.7;
-        this.maxTrail = 30;
+        
+        // Fixed buffer initialization
+        this.maxTrail = 64; 
+        this.trailX = new Float32Array(this.maxTrail);
+        this.trailY = new Float32Array(this.maxTrail);
+        this.trailPtr = 0;
+        this.trailCount = 0;
     }
 
     updateTrail() {
-        this.trail.push({ x: this.x, y: this.y });
-        if (this.trail.length > this.maxTrail) {
-            this.trail.splice(0, this.trail.length - this.maxTrail);
-        }
+        this.trailX[this.trailPtr] = this.x;
+        this.trailY[this.trailPtr] = this.y;
+        this.trailPtr = (this.trailPtr + 1) % this.maxTrail;
+        if (this.trailCount < this.maxTrail) this.trailCount++;
     }
 
     draw(ctx) {
-        const len = this.trail.length;
-        if (len > 1) {
-            for (let i = 0; i < len - 1; i++) {
-                const t = i / len;
+        if (this.trailCount > 1) {
+            const oldestIdx = this.trailCount < this.maxTrail ? 0 : this.trailPtr;
+            
+            for (let i = 0; i < this.trailCount - 1; i++) {
+                const idx = (oldestIdx + i) % this.maxTrail;
+                const t = i / this.trailCount;
                 const alpha = t * this.trailAlphaMult;
                 const r = this.radius * t * this.trailRadiusMult;
+                
                 ctx.beginPath();
-                ctx.arc(this.trail[i].x, this.trail[i].y, Math.max(r, 0.5), 0, Math.PI * 2);
+                ctx.arc(this.trailX[idx], this.trailY[idx], Math.max(r, 0.5), 0, Math.PI * 2);
                 ctx.fillStyle = `rgba(${this.colorR}, ${this.colorG}, ${this.colorB}, ${alpha})`;
                 ctx.fill();
             }
@@ -152,7 +160,7 @@ class Dust extends OrbitalEntity {
         this.y += this.vy;
 
         const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-        this.maxTrail = Math.min(Math.floor(5 + this.mass * 10 + speed * 5), 53);
+        //this.maxTrail = Math.min(Math.floor(5 + this.mass * 10 + speed * 5), 53);
         this.updateTrail();
         return false;
     }
@@ -162,6 +170,7 @@ class Meteor extends OrbitalEntity {
     constructor(x, y, gameState, canvasWidth, canvasHeight) {
         const mass = gameState.getEffectiveMass() * 20;
         super(x, y, mass);
+        this.isMeteor = true;
         this.radius = dustRadius(this.mass) * 1.2;
 
         this.colorR = 180 + Math.floor(Math.random() * 40);
@@ -201,8 +210,146 @@ class Meteor extends OrbitalEntity {
     }
 }
 
+// --- Physics Helpers ---
+class Rectangle {
+    constructor(x, y, w, h) {
+        this.x = x; this.y = y; this.w = w; this.h = h;
+    }
+    contains(entity) {
+        return (entity.x >= this.x - this.w &&
+                entity.x <= this.x + this.w &&
+                entity.y >= this.y - this.h &&
+                entity.y <= this.y + this.h);
+    }
+    intersects(range) {
+        if (range.x - range.w > this.x + this.w) return false;
+        if (range.x + range.w < this.x - this.w) return false;
+        if (range.y - range.h > this.y + this.h) return false;
+        if (range.y + range.h < this.y - this.h) return false;
+        return true;
+    }
+}
+
+class Quadtree {
+    constructor(boundary, capacity) {
+        this.boundary = boundary;
+        this.capacity = capacity;
+        this.entities = [];
+        this.divided = false;
+    }
+
+    subdivide() {
+        const x = this.boundary.x; const y = this.boundary.y;
+        const w = this.boundary.w; const h = this.boundary.h;
+        this.northeast = new Quadtree(new Rectangle(x + w / 2, y - h / 2, w / 2, h / 2), this.capacity);
+        this.northwest = new Quadtree(new Rectangle(x - w / 2, y - h / 2, w / 2, h / 2), this.capacity);
+        this.southeast = new Quadtree(new Rectangle(x + w / 2, y + h / 2, w / 2, h / 2), this.capacity);
+        this.southwest = new Quadtree(new Rectangle(x - w / 2, y + h / 2, w / 2, h / 2), this.capacity);
+        this.divided = true;
+    }
+
+    insert(entity) {
+        if (!this.boundary.contains(entity)) return false;
+
+        if (this.entities.length < this.capacity) {
+            this.entities.push(entity);
+            return true;
+        }
+
+        if (!this.divided) this.subdivide();
+
+        if (this.northeast.insert(entity)) return true;
+        if (this.northwest.insert(entity)) return true;
+        if (this.southeast.insert(entity)) return true;
+        if (this.southwest.insert(entity)) return true;
+        
+        return false;
+    }
+
+    query(range, found = []) {
+        if (!this.boundary.intersects(range)) return found;
+
+        for (let i = 0; i < this.entities.length; i++) {
+            if (range.contains(this.entities[i])) {
+                found.push(this.entities[i]);
+            }
+        }
+
+        if (this.divided) {
+            this.northwest.query(range, found);
+            this.northeast.query(range, found);
+            this.southwest.query(range, found);
+            this.southeast.query(range, found);
+        }
+        return found;
+    }
+}
+
+
 // --- Physics System ---
 class Physics {
+    static resolveCollisions(particles, meteors, collisionFlashes, canvasWidth, canvasHeight) {
+        const boundary = new Rectangle(canvasWidth / 2, canvasHeight / 2, canvasWidth / 2, canvasHeight / 2);
+        const qtree = new Quadtree(boundary, 4);
+
+        // Populate Tree
+        for (let i = 0; i < particles.length; i++) {
+            if (!particles[i].alive) continue;
+            qtree.insert(particles[i]);
+        }
+        for (let i = 0; i < meteors.length; i++) {
+            if (!meteors[i].alive) continue;
+            qtree.insert(meteors[i]);
+        }
+
+        // Resolve Dust-to-Dust and Dust-to-Meteor via Tree
+        for (let i = 0; i < particles.length; i++) {
+            const a = particles[i];
+            if (!a.alive) continue;
+
+            const range = new Rectangle(a.x, a.y, a.radius * 4, a.radius * 4);
+            const candidates = qtree.query(range);
+
+            for (let j = 0; j < candidates.length; j++) {
+                const b = candidates[j];
+                if (a === b || !b.alive) continue;
+
+                if (b.isMeteor) {
+                     // Let meteor logic handle this collision below to avoid double processing
+                     continue;
+                }
+                this.checkDustCollision(a, b, collisionFlashes);
+            }
+        }
+
+        // Resolve Meteor-to-Dust
+        for (let i = 0; i < meteors.length; i++) {
+            const m = meteors[i];
+            if (!m.alive) continue;
+
+            const range = new Rectangle(m.x, m.y, m.radius * 2, m.radius * 2);
+            const candidates = qtree.query(range);
+
+            for (let j = 0; j < candidates.length; j++) {
+                const d = candidates[j];
+                if (!d.alive || d.mass >= m.mass) continue;
+
+                const dx = m.x - d.x;
+                const dy = m.y - d.y;
+                if (dx * dx + dy * dy < (m.radius + d.radius) * (m.radius + d.radius)) {
+                    collisionFlashes.push({ x: (m.x + d.x) / 2, y: (m.y + d.y) / 2, life: 1.0, radius: (m.radius + d.radius) * 1.5 });
+                    m.mass += d.mass;
+                    m.radius = dustRadius(m.mass) * 1.2;
+                    d.alive = false;
+                }
+            }
+        }
+    }
+
+
+
+
+    
     static resolveCollisions(particles, meteors, collisionFlashes, canvasWidth, canvasHeight) {
         const gridSize = 60;
         const gridCols = Math.ceil(canvasWidth / gridSize);
