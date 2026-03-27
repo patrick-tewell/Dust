@@ -693,6 +693,7 @@ class Renderer {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
         this.stars = [];
+        this.bgRotation = 0;
         this.generateStars();
     }
 
@@ -708,7 +709,9 @@ class Renderer {
         }
     }
 
-    drawBackground(starRadius) {
+    drawBackground(starRadius, dt = 1) {
+        this.bgRotation -= 0.0005 * dt; // Background rotation adjustment
+
         const scale = Math.min(this.canvas.width * 2, this.canvas.height * 2) / VIRTUAL_STAR_SIZE;
         const centerX = this.canvas.width / 2;
         const centerY = this.canvas.height / 2;
@@ -716,13 +719,25 @@ class Renderer {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.fillStyle = "#fff";
         
+        // Save the context state before transforming
+        this.ctx.save();
+        
+        // Move the canvas origin to the center, then rotate
+        this.ctx.translate(centerX, centerY);
+        this.ctx.rotate(this.bgRotation);
+
         const currentDeadZone = starRadius * STAR_DEADZONE_MULT / scale;
         for (const star of this.stars) {
             if (Math.sqrt(star.dx * star.dx + star.dy * star.dy) < currentDeadZone) continue;
             this.ctx.beginPath();
-            this.ctx.arc(centerX + star.dx * scale, centerY + star.dy * scale, star.size * scale, 0, 2 * Math.PI);
+            
+            // Draw relative to the new (0,0) center origin
+            this.ctx.arc(star.dx * scale, star.dy * scale, star.size * scale, 0, 2 * Math.PI);
             this.ctx.fill();
         }
+
+        // Restore the context state so the planet and entities don't rotate
+        this.ctx.restore();
     }
 
     drawPlanet(starMass, starRadius) {
@@ -845,7 +860,7 @@ class Game {
         const cx = this.ui.elements.canvas.width / 2;
         const cy = this.ui.elements.canvas.height / 2;
 
-        this.renderer.drawBackground(this.state.starRadius);
+        this.renderer.drawBackground(this.state.starRadius, dt);
 
         let absorptionOccurred = false;
 
