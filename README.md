@@ -1,4 +1,7 @@
 # Dust Engine
+
+![Short Preview of Orbital Mechanics](assets/Dust.gif)
+
 Dust is a lightweight, framework-free game engine built to explore the fundamentals of browser-based game design. By avoiding modern libraries and dependencies, this project focuses on the core mechanics of the game loop, procedural rendering, and low-level input handling.
 
 The goal is to maintain a high-performance simulation using vanilla JavaScript, specifically focusing on systemic mechanics like orbital physics and spatial partitioning.
