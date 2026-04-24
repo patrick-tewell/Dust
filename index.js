@@ -660,7 +660,7 @@ class Renderer {
     }
 
     drawBackground(starRadius, dt = 1) {
-        this.bgRotation -= 0.0005 * dt; // Background rotation adjustment
+        this.bgRotation -= 0.0002 * dt; // Background rotation adjustment
 
         const scale = Math.min(this.canvas.width * 2, this.canvas.height * 2) / VIRTUAL_STAR_SIZE;
         const centerX = this.canvas.width / 2;
